@@ -14,19 +14,21 @@ namespace HomeScoutingBot.Services
 {
     public class DiscordService : IHostedService
     {
-        private readonly IOptionsMonitor<GeneralOptions> _config;
-        private readonly CommandService _commandService;
-        private readonly DiscordSocketClient _client;
         private readonly IServiceProvider _services;
+        private readonly DiscordSocketClient _client;
+        private readonly CommandService _commandService;
         private readonly ILogger<DiscordService> _logger;
+        private readonly IOptionsMonitor<BotOptions> _botConfig;
+        private readonly IOptionsMonitor<TextOptions> _textConfig;
 
-        public DiscordService(IServiceProvider services, DiscordSocketClient client, CommandService commandService, ILogger<DiscordService> logger, IOptionsMonitor<GeneralOptions> config)
+        public DiscordService(IServiceProvider services, DiscordSocketClient client, CommandService commandService, ILogger<DiscordService> logger, IOptionsMonitor<BotOptions> botConfig, IOptionsMonitor<TextOptions> textConfig)
         {
-            _commandService = commandService;
-            _client = client;
             _services = services;
+            _client = client;
+            _commandService = commandService;
             _logger = logger;
-            _config = config;
+            _botConfig = botConfig;
+            _textConfig = textConfig;
         }
 
         public async Task StartAsync(CancellationToken cancellationToken)
@@ -37,7 +39,7 @@ namespace HomeScoutingBot.Services
             _commandService.CommandExecuted += CommandExecutedAsync;
             _client.MessageReceived += MessageReceivedAsync;
 
-            await _client.LoginAsync(TokenType.Bot, _config.CurrentValue.Token);
+            await _client.LoginAsync(TokenType.Bot, _botConfig.CurrentValue.Token);
             await _client.StartAsync();
         }
 
@@ -58,7 +60,7 @@ namespace HomeScoutingBot.Services
                 return;
             }
 
-            string prefix = _config.CurrentValue.Prefix;
+            string prefix = _botConfig.CurrentValue.Prefix;
             int argPos = 0;
             if (!(message.HasMentionPrefix(_client.CurrentUser, ref argPos) || // for @'ing the bot
                   message.HasStringPrefix(prefix, ref argPos)))                // for using the prefix
@@ -81,10 +83,15 @@ namespace HomeScoutingBot.Services
 
             _logger.LogWarning("Command failed to execute for '{0}': {1}", context.User.Username, result.ErrorReason);
 
-            if (command.IsSpecified)
+            if (command.IsSpecified) // command exists but failed to execute
             {
-                // command exists but failed to execute
-                await context.Channel.SendMessageAsync(string.Format(_config.CurrentValue.ErrorMessage, context.User.Username, result));
+                string name = context.User.Username;
+                if (context.User is IGuildUser guildUser)
+                {
+                    name = guildUser.Nickname ?? name;
+                }
+
+                await context.Channel.SendMessageAsync(string.Format(_textConfig.CurrentValue.CommandExecutionFailed, name, result));
             }
         }
     }

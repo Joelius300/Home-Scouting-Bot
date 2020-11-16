@@ -24,8 +24,10 @@ namespace HomeScoutingBot
 
             services.AddHostedService<DiscordService>();
 
-            services.Configure<GeneralOptions>(hostBuilderContext.Configuration.GetSection("General"));
-            // This doesn't update IOptionsMonitor for some reason
+            services.Configure<BotOptions>(hostBuilderContext.Configuration.GetSection("Bot"));
+            services.Configure<TextOptions>(hostBuilderContext.Configuration.GetSection("Texts"));
+            // As far as I understand, this would be better
+            // But it doesn't update on change for some reason
             //services.AddOptions<GeneralOptions>()
             //        .BindConfiguration("General");
         }
