@@ -7,7 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Home_Scouting_Bot
+namespace HomeScoutingBot
 {
     internal static class HostLoggingExtensions
     {

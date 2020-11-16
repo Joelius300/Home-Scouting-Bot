@@ -5,12 +5,12 @@ using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
-using Home_Scouting_Bot.Options;
+using HomeScoutingBot.Options;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Hosting;
 using System.Threading;
 
-namespace Home_Scouting_Bot.Services
+namespace HomeScoutingBot.Services
 {
     public class DiscordService : IHostedService
     {

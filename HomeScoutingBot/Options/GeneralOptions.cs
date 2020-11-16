@@ -1,4 +1,4 @@
-﻿namespace Home_Scouting_Bot.Options
+﻿namespace HomeScoutingBot.Options
 {
     public class GeneralOptions
     {

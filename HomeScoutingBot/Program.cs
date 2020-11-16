@@ -1,12 +1,12 @@
 ﻿using System.Threading.Tasks;
 using Discord.Commands;
 using Discord.WebSocket;
-using Home_Scouting_Bot.Options;
-using Home_Scouting_Bot.Services;
+using HomeScoutingBot.Options;
+using HomeScoutingBot.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-namespace Home_Scouting_Bot
+namespace HomeScoutingBot
 {
     public static class Program
     {

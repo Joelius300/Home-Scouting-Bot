@@ -1,7 +1,7 @@
 ﻿using System.Threading.Tasks;
 using Discord.Commands;
 
-namespace Home_Scouting_Bot.Modules
+namespace HomeScoutingBot.Modules
 {
     [RequireOwner]
     public class DebugModule : ModuleBase<SocketCommandContext>
