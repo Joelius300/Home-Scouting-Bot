@@ -24,10 +24,14 @@ namespace HomeScoutingBot
 
             services.AddHostedService<DiscordService>();
 
-            services.Configure<BotOptions>(hostBuilderContext.Configuration.GetSection("Bot"));
-            services.Configure<TextOptions>(hostBuilderContext.Configuration.GetSection("Texts"));
+            services.AddOptions<BotOptions>()
+                    .Bind(hostBuilderContext.Configuration.GetSection("Bot"));
+
+            services.AddOptions<TextOptions>()
+                    .Bind(hostBuilderContext.Configuration.GetSection("Texts"));
+
             // As far as I understand, this would be better
-            // But it doesn't update on change for some reason
+            // But it doesn't update on change (see https://github.com/dotnet/runtime/issues/36209#issuecomment-731331916)
             //services.AddOptions<GeneralOptions>()
             //        .BindConfiguration("General");
         }
