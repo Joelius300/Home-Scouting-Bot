@@ -1,14 +1,15 @@
 ﻿using System;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
-using HomeScoutingBot.Options;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Hosting;
-using System.Threading;
+using Microsoft.Extensions.DependencyInjection;
+using HomeScoutingBot.Options;
 
 namespace HomeScoutingBot.Services
 {
@@ -70,7 +71,10 @@ namespace HomeScoutingBot.Services
 
             ICommandContext context = new SocketCommandContext(_client, message);
 
-            await _commandService.ExecuteAsync(context, argPos, _services);
+            using (IServiceScope scope = _services.CreateScope())
+            {
+                await _commandService.ExecuteAsync(context, argPos, scope.ServiceProvider);
+            }
         }
 
         public async Task CommandExecutedAsync(Optional<CommandInfo> command, ICommandContext context, IResult result)
