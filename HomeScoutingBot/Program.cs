@@ -30,6 +30,9 @@ namespace HomeScoutingBot
             services.AddOptions<TextOptions>()
                     .Bind(hostBuilderContext.Configuration.GetSection("Texts"));
 
+            services.AddOptions<GroupOptions>()
+                    .Bind(hostBuilderContext.Configuration.GetSection("Group"));
+
             // As far as I understand, this would be better
             // But it doesn't update on change (see https://github.com/dotnet/runtime/issues/36209#issuecomment-731331916)
             //services.AddOptions<GeneralOptions>()
