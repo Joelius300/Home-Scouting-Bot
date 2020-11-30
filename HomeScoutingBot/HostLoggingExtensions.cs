@@ -47,8 +47,9 @@ namespace HomeScoutingBot
 
         private static LogLevel LogLevelFromSeverity(LogSeverity severity) => severity switch
         {
-            LogSeverity.Verbose => LogLevel.Trace,
-            LogSeverity.Debug => LogLevel.Debug,
+            // Debug and Verbose is swapped in Discord.Net
+            LogSeverity.Debug => LogLevel.Trace,
+            LogSeverity.Verbose => LogLevel.Debug,
             LogSeverity.Info => LogLevel.Information,
             LogSeverity.Warning => LogLevel.Warning,
             LogSeverity.Error => LogLevel.Error,
