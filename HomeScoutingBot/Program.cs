@@ -1,4 +1,5 @@
 ﻿using System.Threading.Tasks;
+using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
 using HomeScoutingBot.Options;
@@ -19,10 +20,19 @@ namespace HomeScoutingBot
 
         private static void ConfigureServices(HostBuilderContext hostBuilderContext, IServiceCollection services)
         {
-            services.AddSingleton<DiscordSocketClient>();
+            services.AddSingleton(sp => new DiscordSocketClient(sp.GetService<DiscordSocketConfig>() ?? new DiscordSocketConfig()));
             services.AddSingleton<CommandService>();
 
             services.AddHostedService<DiscordService>();
+
+            services.AddSingleton(new DiscordSocketConfig
+            {
+                GatewayIntents =
+                    GatewayIntents.Guilds |
+                    GatewayIntents.GuildMembers |
+                    GatewayIntents.GuildMessages |
+                    GatewayIntents.GuildVoiceStates
+            });
 
             services.AddOptions<BotOptions>()
                     .Bind(hostBuilderContext.Configuration.GetSection("Bot"));
