@@ -6,7 +6,7 @@ namespace HomeScoutingBot.Modules
     [RequireOwner]
     public class DebugModule : ModuleBase<SocketCommandContext>
     {
-        [Command("Ping")]
+        [Command(nameof(Ping))]
         public Task Ping() => ReplyAsync("Pong");
     }
 }

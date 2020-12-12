@@ -14,7 +14,7 @@ using Microsoft.Extensions.Options;
 
 namespace HomeScoutingBot.Modules
 {
-    [RequireUserPermission(GuildPermission.ManageChannels)]
+    [RequireUserPermission(GuildPermission.ManageChannels | GuildPermission.ManageRoles)]
     public class GroupModule : ModuleBase<SocketCommandContext>
     {
         private readonly TextOptions _textConfig;
@@ -44,6 +44,7 @@ namespace HomeScoutingBot.Modules
         }
 
         [Command(nameof(Setup))] // Should probably be RunMode Async but for that the scoping stuff need to be reworked
+        [RequireContext(ContextType.Guild)]
         [RequireBotPermission(GuildPermission.ManageChannels | GuildPermission.ManageRoles | GuildPermission.SendMessages)]
         public async Task Setup(int amount)
         {
@@ -52,31 +53,37 @@ namespace HomeScoutingBot.Modules
 
             for (int i = 0; i < amount; i++)
             {
-                string name = string.Format(_groupConfig.GroupChannelNameTemplate, i + 1);
-
-                RestRole role = await Context.Guild.CreateRoleAsync(name,
-                                                                    GuildPermissions.None,
-                                                                    _roleColors[i % _roleColors.Count],
-                                                                    isMentionable: false,
-                                                                    isHoisted: true,
-                                                                    options: _retryRateLimitRequestOptions);
-
-                ICategoryChannel category = await Context.Guild.CreateCategoryChannelAsync(name, options: _retryRateLimitRequestOptions);
-
-                OverwritePermissions groupPermission = new OverwritePermissions(viewChannel: PermValue.Allow, connect: PermValue.Allow);
-                await category.AddPermissionOverwriteAsync(role, groupPermission, _retryRateLimitRequestOptions);
-                // The bot needs those permissions as well otherwise it can't delete the channel later on. Alternatively you could add 'role' to the bot
-                await category.AddPermissionOverwriteAsync(Context.Client.CurrentUser, groupPermission, _retryRateLimitRequestOptions);
-
-                OverwritePermissions everyonePermission = new OverwritePermissions(viewChannel: PermValue.Deny, connect: PermValue.Deny);
-                await category.AddPermissionOverwriteAsync(Context.Guild.EveryoneRole, everyonePermission, _retryRateLimitRequestOptions);
-
-                Action<GuildChannelProperties> assignCategoryId = c => c.CategoryId = category.Id;
-                await Context.Guild.CreateTextChannelAsync(name, assignCategoryId, _retryRateLimitRequestOptions);
-                await Context.Guild.CreateVoiceChannelAsync(name, assignCategoryId, _retryRateLimitRequestOptions);
+                await CreateGroup(i + 1, _roleColors[i % _roleColors.Count]);
             }
 
             await ReplyAsync(string.Format(_textConfig.GroupsCreated, amount));
+        }
+
+        private async Task CreateGroup(int i, Color roleColor)
+        {
+            string name = string.Format(_groupConfig.GroupChannelNameTemplate, i);
+            RestRole role = await Context.Guild.CreateRoleAsync(name,
+                                                                GuildPermissions.None,
+                                                                roleColor,
+                                                                isMentionable: false,
+                                                                isHoisted: true,
+                                                                options: _retryRateLimitRequestOptions);
+
+            // Create group-category which only 'role' can see and join
+            ICategoryChannel category = await Context.Guild.CreateCategoryChannelAsync(name, options: _retryRateLimitRequestOptions);
+
+            OverwritePermissions groupPermission = new OverwritePermissions(viewChannel: PermValue.Allow, connect: PermValue.Allow);
+            await category.AddPermissionOverwriteAsync(role, groupPermission, _retryRateLimitRequestOptions);
+            // The bot needs those permissions as well otherwise it can't delete the channel later on. Alternatively you could add 'role' to the bot.
+            await category.AddPermissionOverwriteAsync(Context.Client.CurrentUser, groupPermission, _retryRateLimitRequestOptions);
+
+            OverwritePermissions everyonePermission = new OverwritePermissions(viewChannel: PermValue.Deny, connect: PermValue.Deny);
+            await category.AddPermissionOverwriteAsync(Context.Guild.EveryoneRole, everyonePermission, _retryRateLimitRequestOptions);
+
+            // Add one text and one voice channel
+            Action<GuildChannelProperties> assignCategoryId = c => c.CategoryId = category.Id;
+            await Context.Guild.CreateTextChannelAsync(name, assignCategoryId, _retryRateLimitRequestOptions);
+            await Context.Guild.CreateVoiceChannelAsync(name, assignCategoryId, _retryRateLimitRequestOptions);
         }
 
         [Command(nameof(Distribute))]
@@ -111,7 +118,7 @@ namespace HomeScoutingBot.Modules
             if (overflowHandling == GroupOverflowHandling.Error &&
                 usersToGroup.Count % groupSize > 0)
             {
-                // Throw the exception before distributing any roles
+                // Throw the exception before distributing any roles (fast fail)
                 throw new InvalidOperationException($"{usersToGroup.Count} users can't be split evenly into {groupAmount} groups.");
             }
 
@@ -157,64 +164,26 @@ namespace HomeScoutingBot.Modules
             await ReplyAsync($"{groupAmount * groupSize + usersToGroup.Count} users were split into {groupsCreated} groups."); // TODO TextOptions
         }
 
-        [Command(nameof(BreakUp))]
-        [RequireContext(ContextType.Guild)]
-        [RequireBotPermission(GuildPermission.ManageRoles | GuildPermission.SendMessages)]
-        public async Task BreakUp()
+        private static void ExcludeSpecifiedUsers(IEnumerable<string> excludes, List<SocketGuildUser> users)
         {
-            List<SocketRole> roles = GetAllGroupRoles().ToList();
-            foreach (SocketGuildUser user in Context.Guild.Users)
+            foreach (string ignore in excludes)
             {
-                foreach (SocketRole role in user.Roles)
+                if (!(ignore.StartsWith("<@") && ignore.EndsWith('>')))
+                    // TODO maybe fallback to name-based user and role comparison
+                    throw new NotSupportedException("To exclude users or roles, mention them with @.");
+
+                ulong mentionId = ulong.Parse(ignore.Substring(3, ignore.Length - 3 - 1));
+                if (ignore.StartsWith("<@&")) // exclude specific roles
                 {
-                    if (roles.Any(r => role.Id == r.Id))
-                    {
-                        await user.RemoveRoleAsync(role, _retryRateLimitRequestOptions);
-                    }
+                    users.RemoveAll(g => g.Roles.Any(r => r.Id == mentionId));  // id-based Contains
+                }
+                else if (ignore.StartsWith("<@!")) // exclude specific users
+                {
+                    int index = users.FindIndex(u => u.Id == mentionId);
+                    users.RemoveAt(index);
                 }
             }
-
-            await ReplyAsync("All groups were broken up."); // TODO TextOptions
         }
-
-        [Command(nameof(Teardown))]
-        [RequireBotPermission(GuildPermission.ManageChannels | GuildPermission.ManageRoles | GuildPermission.SendMessages)]
-        public async Task Teardown()
-        {
-            // TODO Maybe confirm with user
-
-            int count = 0;
-            IEnumerable<IDeletable> groupChannels = GetAllGroupChannels();
-            foreach (IDeletable deletable in groupChannels.Concat(GetAllGroupRoles()))
-            {
-                await deletable.DeleteAsync(_retryRateLimitRequestOptions);
-                if (deletable is ICategoryChannel)
-                {
-                    count++;
-                }
-            }
-
-            await ReplyAsync(string.Format(_textConfig.GroupsDeleted, count));
-        }
-
-        // Returns Voice, Text AND Categories
-        private IEnumerable<SocketGuildChannel> GetAllGroupChannels()
-        {
-            IEnumerable<SocketCategoryChannel> groupCategories = Context.Guild.CategoryChannels
-                                                                              .Where(c => GroupNameMatcher(c.Name));
-
-            foreach (SocketCategoryChannel categoryChannel in groupCategories)
-            {
-                foreach (SocketGuildChannel channel in categoryChannel.Channels)
-                {
-                    yield return channel;
-                }
-
-                yield return categoryChannel;
-            }
-        }
-
-        private IEnumerable<SocketRole> GetAllGroupRoles() => Context.Guild.Roles.Where(c => GroupNameMatcher(c.Name));
 
         private Task AddUserToGroup(IGuildUser user, int group)
         {
@@ -227,6 +196,59 @@ namespace HomeScoutingBot.Modules
             return user.AddRoleAsync(role, _retryRateLimitRequestOptions);
         }
 
+        [Command(nameof(BreakUp))]
+        [RequireContext(ContextType.Guild)]
+        [RequireBotPermission(GuildPermission.ManageRoles | GuildPermission.SendMessages)]
+        public async Task BreakUp()
+        {
+            List<SocketRole> roles = GetGroupRoles().ToList();
+            foreach (SocketGuildUser user in Context.Guild.Users)
+            {
+                // user.RemoveRolesAsync can't do it in batch so it sends loads of request if we don't check the roles first
+                foreach (SocketRole role in user.Roles)
+                {
+                    if (roles.Any(r => role.Id == r.Id)) // id-based Contains
+                    {
+                        await user.RemoveRoleAsync(role, _retryRateLimitRequestOptions);
+                    }
+                }
+            }
+
+            await ReplyAsync("All groups were broken up."); // TODO TextOptions
+        }
+
+        [Command(nameof(Teardown))]
+        [RequireContext(ContextType.Guild)]
+        [RequireBotPermission(GuildPermission.ManageChannels | GuildPermission.ManageRoles | GuildPermission.SendMessages)]
+        public async Task Teardown()
+        {
+            // TODO Maybe confirm with user (but that could break statelessness)
+
+            foreach (SocketCategoryChannel category in GetGroupCategories())
+            {
+                foreach (SocketGuildChannel innerChannel in category.Channels)
+                {
+                    await Delete(innerChannel);
+                }
+
+                await Delete(category);
+            }
+
+            int deletedRolesCount = 0; // this isn't always reliable but provides some user feedback
+            foreach (SocketRole role in GetGroupRoles())
+            {
+                await Delete(role);
+                deletedRolesCount++;
+            }
+
+            await ReplyAsync(string.Format(_textConfig.GroupsDeleted, deletedRolesCount));
+
+            Task Delete(IDeletable deletable) => deletable.DeleteAsync(_retryRateLimitRequestOptions);
+        }
+
+        private IEnumerable<SocketCategoryChannel> GetGroupCategories() => Context.Guild.CategoryChannels.Where(c => GroupNameMatcher(c.Name));
+        private IEnumerable<SocketRole> GetGroupRoles() => Context.Guild.Roles.Where(c => GroupNameMatcher(c.Name));
+
         private Predicate<string> GetGroupNameMatcher()
         {
             const string Placeholder = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; // regex-safe placeholder used for allowing regex-unsafe name-templates
@@ -236,27 +258,6 @@ namespace HomeScoutingBot.Modules
             nameRegex = nameRegex.Replace(Placeholder, "\\d+");
 
             return name => Regex.IsMatch(name, $"^{nameRegex}$", RegexOptions.IgnoreCase);
-        }
-
-        private static void ExcludeSpecifiedUsers(IEnumerable<string> excludes, List<SocketGuildUser> users)
-        {
-            foreach (string ignore in excludes)
-            {
-                if (!(ignore.StartsWith("<@") && ignore.EndsWith('>')))
-                    // TODO maybe fallback to name-based user and role comparison
-                    throw new NotSupportedException("To exclude users or roles, mention them with @.");
-
-                ulong mentionId = ulong.Parse(ignore.Substring(3, ignore.Length - 3 - 1));
-                if (ignore.StartsWith("<@&")) // exclude specific roles
-                {
-                    users.RemoveAll(g => g.Roles.Any(r => r.Id == mentionId));
-                }
-                else if (ignore.StartsWith("<@!")) // exclude specific users
-                {
-                    int index = users.FindIndex(u => u.Id == mentionId);
-                    users.RemoveAt(index);
-                }
-            }
         }
     }
 }
