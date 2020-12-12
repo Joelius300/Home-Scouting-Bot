@@ -21,6 +21,7 @@ namespace HomeScoutingBot.Modules
         private readonly GroupOptions _groupConfig;
         private readonly ILogger<GroupModule> _logger;
         private readonly Lazy<Predicate<string>> _groupNameMatcher;
+        private readonly Lazy<Random> _rng;
         private readonly RequestOptions _retryRateLimitRequestOptions;
         private readonly IReadOnlyList<Color> _roleColors = new[] // Just some good looking Colors from Chart.js
         {
@@ -30,6 +31,7 @@ namespace HomeScoutingBot.Modules
         };
 
         protected Predicate<string> GroupNameMatcher => _groupNameMatcher.Value;
+        protected Random Rng => _rng.Value;
 
         public GroupModule(IOptionsSnapshot<TextOptions> textConfig, IOptionsSnapshot<GroupOptions> groupConfig, ILogger<GroupModule> logger)
         {
@@ -37,6 +39,7 @@ namespace HomeScoutingBot.Modules
             _groupConfig = groupConfig.Value;
             _logger = logger;
             _groupNameMatcher = new Lazy<Predicate<string>>(GetGroupNameMatcher);
+            _rng = new Lazy<Random>();
             _retryRateLimitRequestOptions = new RequestOptions { RetryMode = RetryMode.RetryRatelimit }; // Not sure if this is needed
         }
 
@@ -74,6 +77,104 @@ namespace HomeScoutingBot.Modules
             }
 
             await ReplyAsync(string.Format(_textConfig.GroupsCreated, amount));
+        }
+
+        [Command(nameof(Distribute))]
+        [RequireContext(ContextType.Guild)] // These precondition attributes can't be localized since they require compile time strings..
+        [RequireBotPermission(GuildPermission.ManageRoles | GuildPermission.SendMessages)]
+        public async Task Distribute(int groupSize, GroupDistributeArguments? arguments = default)
+        {
+            if (groupSize < 1)
+                throw new ArgumentOutOfRangeException(nameof(groupSize), "The group size has to be higher than 1.");
+
+            if (Context.User is not SocketGuildUser guildUser)
+                throw new InvalidOperationException("Message wasn't sent in the context of a guild.");
+
+            if (guildUser.VoiceChannel is null)
+                throw new InvalidOperationException("You have to be in a voice channel to use this command."); // TODO maybe use a custom precondition attribute
+
+            List<SocketGuildUser> usersToGroup = guildUser.VoiceChannel.Users.ToList();
+            GroupOverflowHandling overflowHandling = default;
+            if (arguments is not null)
+            {
+                overflowHandling = arguments.OverflowHandling;
+                ExcludeSpecifiedUsers(arguments.Exclude, usersToGroup);
+            }
+
+            if (usersToGroup.Count == 0)
+                throw new ArgumentException("There are no users left to put into groups.");
+
+            if (groupSize > usersToGroup.Count)
+                throw new ArgumentException("The group size has to be lower than the number of users to group.");
+
+            int groupAmount = usersToGroup.Count / groupSize;
+            if (overflowHandling == GroupOverflowHandling.Error &&
+                usersToGroup.Count % groupSize > 0)
+            {
+                // Throw the exception before distributing any roles
+                throw new InvalidOperationException($"{usersToGroup.Count} users can't be split evenly into {groupAmount} groups.");
+            }
+
+            for (int i = 0; i < groupAmount; i++)
+            {
+                for (int _ = 0; _ < groupSize; _++)
+                {
+                    // Take and remove a random user from the list and add it to the current group
+                    int randomIndex = Rng.Next(usersToGroup.Count);
+                    SocketGuildUser user = usersToGroup[randomIndex];
+                    usersToGroup.RemoveAt(randomIndex);
+
+                    await AddUserToGroup(user, i + 1);
+                }
+            }
+
+            int groupsCreated = groupAmount; // just for user-feedback
+            if (usersToGroup.Count > 0)
+            {
+                switch (overflowHandling)
+                {
+                    case GroupOverflowHandling.Spread:
+                        for (int i = 0; i < usersToGroup.Count; i++)
+                        {
+                            // Put all users in the group at their position with loop-around - random enough for us
+                            await AddUserToGroup(usersToGroup[i], (i % groupAmount) + 1);
+                        }
+
+                        break;
+                    case GroupOverflowHandling.NewGroup:
+                        groupsCreated++;
+                        foreach (SocketGuildUser user in usersToGroup)
+                        {
+                            await AddUserToGroup(user, groupsCreated);
+                        }
+
+                        break;
+                    default: // GroupOverflowHandling.Error was already handled before
+                        break;
+                }
+            }
+
+            await ReplyAsync($"{groupAmount * groupSize + usersToGroup.Count} users were split into {groupsCreated} groups."); // TODO TextOptions
+        }
+
+        [Command(nameof(BreakUp))]
+        [RequireContext(ContextType.Guild)]
+        [RequireBotPermission(GuildPermission.ManageRoles | GuildPermission.SendMessages)]
+        public async Task BreakUp()
+        {
+            List<SocketRole> roles = GetAllGroupRoles().ToList();
+            foreach (SocketGuildUser user in Context.Guild.Users)
+            {
+                foreach (SocketRole role in user.Roles)
+                {
+                    if (roles.Any(r => role.Id == r.Id))
+                    {
+                        await user.RemoveRoleAsync(role, _retryRateLimitRequestOptions);
+                    }
+                }
+            }
+
+            await ReplyAsync("All groups were broken up."); // TODO TextOptions
         }
 
         [Command(nameof(Teardown))]
@@ -115,6 +216,17 @@ namespace HomeScoutingBot.Modules
 
         private IEnumerable<SocketRole> GetAllGroupRoles() => Context.Guild.Roles.Where(c => GroupNameMatcher(c.Name));
 
+        private Task AddUserToGroup(IGuildUser user, int group)
+        {
+            string roleName = string.Format(_groupConfig.GroupChannelNameTemplate, group);
+            SocketRole? role = Context.Guild.Roles.FirstOrDefault(r => r.Name.Equals(roleName, StringComparison.OrdinalIgnoreCase));
+
+            if (role is null) // TODO oh boy this is a late fail. Easily recoverable by calling the breakup command but still..
+                throw new InvalidOperationException($"The guild doesn't appear to be setup for {roleName}.");
+
+            return user.AddRoleAsync(role, _retryRateLimitRequestOptions);
+        }
+
         private Predicate<string> GetGroupNameMatcher()
         {
             const string Placeholder = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; // regex-safe placeholder used for allowing regex-unsafe name-templates
@@ -124,6 +236,27 @@ namespace HomeScoutingBot.Modules
             nameRegex = nameRegex.Replace(Placeholder, "\\d+");
 
             return name => Regex.IsMatch(name, $"^{nameRegex}$", RegexOptions.IgnoreCase);
+        }
+
+        private static void ExcludeSpecifiedUsers(IEnumerable<string> excludes, List<SocketGuildUser> users)
+        {
+            foreach (string ignore in excludes)
+            {
+                if (!(ignore.StartsWith("<@") && ignore.EndsWith('>')))
+                    // TODO maybe fallback to name-based user and role comparison
+                    throw new NotSupportedException("To exclude users or roles, mention them with @.");
+
+                ulong mentionId = ulong.Parse(ignore.Substring(3, ignore.Length - 3 - 1));
+                if (ignore.StartsWith("<@&")) // exclude specific roles
+                {
+                    users.RemoveAll(g => g.Roles.Any(r => r.Id == mentionId));
+                }
+                else if (ignore.StartsWith("<@!")) // exclude specific users
+                {
+                    int index = users.FindIndex(u => u.Id == mentionId);
+                    users.RemoveAt(index);
+                }
+            }
         }
     }
 }
