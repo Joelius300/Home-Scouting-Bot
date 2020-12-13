@@ -15,7 +15,7 @@ using Microsoft.Extensions.Options;
 namespace HomeScoutingBot.Modules
 {
     [RequireUserPermission(GuildPermission.ManageChannels | GuildPermission.ManageRoles)]
-    public class GroupModule : ModuleBase<SocketCommandContext>
+    public class GroupModule : ModuleBase<ScopedSocketCommandContext>
     {
         private readonly TextOptions _textConfig;
         private readonly GroupOptions _groupConfig;
@@ -43,7 +43,7 @@ namespace HomeScoutingBot.Modules
             _retryRateLimitRequestOptions = new RequestOptions { RetryMode = RetryMode.RetryRatelimit }; // Not sure if this is needed
         }
 
-        [Command(nameof(Setup))] // Should probably be RunMode Async but for that the scoping stuff need to be reworked
+        [Command(nameof(Setup))]
         [RequireContext(ContextType.Guild)]
         [RequireBotPermission(GuildPermission.ManageChannels | GuildPermission.ManageRoles | GuildPermission.SendMessages)]
         public async Task Setup(int amount)

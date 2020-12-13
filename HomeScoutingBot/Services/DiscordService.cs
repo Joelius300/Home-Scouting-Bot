@@ -69,12 +69,9 @@ namespace HomeScoutingBot.Services
                 return;
             }
 
-            ICommandContext context = new SocketCommandContext(_client, message);
-
-            using (IServiceScope scope = _services.CreateScope())
-            {
-                await _commandService.ExecuteAsync(context, argPos, scope.ServiceProvider);
-            }
+            IServiceScope scope = _services.CreateScope(); // Disposed once command is executed
+            ScopedSocketCommandContext context = new ScopedSocketCommandContext(_client, message, scope);
+            await _commandService.ExecuteAsync(context, argPos, scope.ServiceProvider);
         }
 
         public async Task CommandExecutedAsync(Optional<CommandInfo> command, ICommandContext context, IResult result)
@@ -82,21 +79,25 @@ namespace HomeScoutingBot.Services
             if (result.IsSuccess)
             {
                 _logger.LogDebug("Command '{0}' executed for '{1}'.", command.Value.Name, context.User.Username);
-                return;
             }
-
-            _logger.LogWarning("Command failed to execute for '{0}': {1}", context.User.Username, result.ErrorReason);
-
-            if (command.IsSpecified) // command exists but failed to execute
+            else
             {
-                string name = context.User.Username;
-                if (context.User is IGuildUser guildUser)
-                {
-                    name = guildUser.Nickname ?? name;
-                }
+                _logger.LogWarning("Command failed to execute for '{0}': {1}", context.User.Username, result.ErrorReason);
 
-                await context.Channel.SendMessageAsync(string.Format(_textConfig.CurrentValue.CommandExecutionFailed, name, result));
+                if (command.IsSpecified) // command exists but failed to execute
+                {
+                    string name = context.User.Username;
+                    if (context.User is IGuildUser guildUser)
+                    {
+                        name = guildUser.Nickname ?? name;
+                    }
+
+                    await context.Channel.SendMessageAsync(string.Format(_textConfig.CurrentValue.CommandExecutionFailed, name, result));
+                }
             }
+
+            if (context is IDisposable disposable)
+                disposable.Dispose();
         }
     }
 }

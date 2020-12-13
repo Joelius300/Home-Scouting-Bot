@@ -21,7 +21,7 @@ namespace HomeScoutingBot
         private static void ConfigureServices(HostBuilderContext hostBuilderContext, IServiceCollection services)
         {
             services.AddSingleton(sp => new DiscordSocketClient(sp.GetService<DiscordSocketConfig>() ?? new DiscordSocketConfig()));
-            services.AddSingleton<CommandService>();
+            services.AddSingleton(sp => new CommandService(sp.GetService<CommandServiceConfig>() ?? new CommandServiceConfig()));
 
             services.AddHostedService<DiscordService>();
 
@@ -32,6 +32,12 @@ namespace HomeScoutingBot
                     GatewayIntents.GuildMembers |
                     GatewayIntents.GuildMessages |
                     GatewayIntents.GuildVoiceStates
+            });
+
+            services.AddSingleton(new CommandServiceConfig
+            {
+                DefaultRunMode = RunMode.Async,
+                IgnoreExtraArgs = true
             });
 
             services.AddOptions<BotOptions>()
