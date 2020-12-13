@@ -180,7 +180,10 @@ namespace HomeScoutingBot.Modules
                 else if (ignore.StartsWith("<@!")) // exclude specific users
                 {
                     int index = users.FindIndex(u => u.Id == mentionId);
-                    users.RemoveAt(index);
+                    if (index > -1)
+                    {
+                        users.RemoveAt(index);
+                    }
                 }
             }
         }
