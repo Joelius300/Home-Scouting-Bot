@@ -14,6 +14,7 @@ using Microsoft.Extensions.Options;
 
 namespace HomeScoutingBot.Modules
 {
+    [Group("groups")]
     [RequireUserPermission(GuildPermission.ManageChannels | GuildPermission.ManageRoles)]
     public class GroupModule : ModuleBase<ScopedSocketCommandContext>
     {
