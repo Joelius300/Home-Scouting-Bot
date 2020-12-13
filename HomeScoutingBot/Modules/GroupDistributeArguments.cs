@@ -12,6 +12,7 @@ namespace HomeScoutingBot.Modules
     {
         public IEnumerable<string> Exclude { get; set; } = Enumerable.Empty<string>();
         public GroupOverflowHandling OverflowHandling { get; set; } = default;
+        public bool CreateMissingGroups { get; set; } = true;
     }
 
     public enum GroupOverflowHandling

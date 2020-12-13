@@ -48,29 +48,29 @@ namespace HomeScoutingBot.Modules
         [RequireBotPermission(GuildPermission.ManageChannels | GuildPermission.ManageRoles | GuildPermission.SendMessages)]
         public async Task Setup(int amount)
         {
-            if (amount < 2)
+            if (amount < 1)
                 throw new ArgumentOutOfRangeException(nameof(amount));
 
             for (int i = 0; i < amount; i++)
             {
-                await CreateGroup(i + 1, _roleColors[i % _roleColors.Count]);
+                await CreateGroup(i + 1);
             }
 
             await ReplyAsync(string.Format(_textConfig.GroupsCreated, amount));
         }
 
-        private async Task CreateGroup(int i, Color roleColor)
+        private async Task<(RestRole role, RestCategoryChannel category, RestTextChannel text, RestVoiceChannel voice)> CreateGroup(int groupNumber)
         {
-            string name = string.Format(_groupConfig.GroupChannelNameTemplate, i);
+            string name = string.Format(_groupConfig.GroupChannelNameTemplate, groupNumber);
             RestRole role = await Context.Guild.CreateRoleAsync(name,
                                                                 GuildPermissions.None,
-                                                                roleColor,
+                                                                _roleColors[(groupNumber-1) % _roleColors.Count], // groupNumber is 1-indexed
                                                                 isMentionable: false,
                                                                 isHoisted: true,
                                                                 options: _retryRateLimitRequestOptions);
 
             // Create group-category which only 'role' can see and join
-            ICategoryChannel category = await Context.Guild.CreateCategoryChannelAsync(name, options: _retryRateLimitRequestOptions);
+            RestCategoryChannel category = await Context.Guild.CreateCategoryChannelAsync(name, options: _retryRateLimitRequestOptions);
 
             OverwritePermissions groupPermission = new OverwritePermissions(viewChannel: PermValue.Allow, connect: PermValue.Allow);
             await category.AddPermissionOverwriteAsync(role, groupPermission, _retryRateLimitRequestOptions);
@@ -82,8 +82,10 @@ namespace HomeScoutingBot.Modules
 
             // Add one text and one voice channel
             Action<GuildChannelProperties> assignCategoryId = c => c.CategoryId = category.Id;
-            await Context.Guild.CreateTextChannelAsync(name, assignCategoryId, _retryRateLimitRequestOptions);
-            await Context.Guild.CreateVoiceChannelAsync(name, assignCategoryId, _retryRateLimitRequestOptions);
+            RestTextChannel text = await Context.Guild.CreateTextChannelAsync(name, assignCategoryId, _retryRateLimitRequestOptions);
+            RestVoiceChannel voice = await Context.Guild.CreateVoiceChannelAsync(name, assignCategoryId, _retryRateLimitRequestOptions);
+
+            return (role, category, text, voice);
         }
 
         [Command(nameof(Distribute))]
@@ -91,6 +93,7 @@ namespace HomeScoutingBot.Modules
         [RequireBotPermission(GuildPermission.ManageRoles | GuildPermission.SendMessages)]
         public async Task Distribute(int groupSize, GroupDistributeArguments? arguments = default)
         {
+            /* ---------- handle arguments ---------- */
             if (groupSize < 1)
                 throw new ArgumentOutOfRangeException(nameof(groupSize), "The group size has to be higher than 1.");
 
@@ -100,30 +103,37 @@ namespace HomeScoutingBot.Modules
             if (guildUser.VoiceChannel is null)
                 throw new InvalidOperationException("You have to be in a voice channel to use this command."); // TODO maybe use a custom precondition attribute
 
-            List<SocketGuildUser> usersToGroup = guildUser.VoiceChannel.Users.ToList();
+            Dictionary<int, IRole> groupRolesCache = new Dictionary<int, IRole>(); // Context.Guild.Roles doesn't update fast enough despite the GUILDS intent
+            List<SocketGuildUser> usersToGroup = guildUser.VoiceChannel.Users.ToList(); // Gets all users *connected* to the voice channel!
             GroupOverflowHandling overflowHandling = default;
+            bool createMissingGroups = true;
             if (arguments is not null)
             {
                 overflowHandling = arguments.OverflowHandling;
+                createMissingGroups = arguments.CreateMissingGroups;
                 ExcludeSpecifiedUsers(arguments.Exclude, usersToGroup);
             }
 
+            int totalUsersToDistribute = usersToGroup.Count; // just for user-feedback
             if (usersToGroup.Count == 0)
                 throw new ArgumentException("There are no users left to put into groups.");
 
             if (groupSize > usersToGroup.Count)
-                throw new ArgumentException("The group size has to be lower than the number of users to group.");
+                throw new ArgumentException("The group size can't be higher than the number of users to group.");
 
             int groupAmount = usersToGroup.Count / groupSize;
             if (overflowHandling == GroupOverflowHandling.Error &&
                 usersToGroup.Count % groupSize > 0)
             {
-                // Throw the exception before distributing any roles (fast fail)
+                // In case of disallowed overflow, throw the exception before distributing any roles (fast fail)
                 throw new InvalidOperationException($"{usersToGroup.Count} users can't be split evenly into {groupAmount} groups.");
             }
 
+            /* ---------- distribute evenly without taking overflow into account ---------- */
             for (int i = 0; i < groupAmount; i++)
             {
+                IRole groupRole = await GetGroupRole(i + 1, createMissingGroups, roleCache: null);
+                groupRolesCache[i + 1] = groupRole;
                 for (int _ = 0; _ < groupSize; _++)
                 {
                     // Take and remove a random user from the list and add it to the current group
@@ -131,11 +141,11 @@ namespace HomeScoutingBot.Modules
                     SocketGuildUser user = usersToGroup[randomIndex];
                     usersToGroup.RemoveAt(randomIndex);
 
-                    await AddUserToGroup(user, i + 1);
+                    await user.AddRoleAsync(groupRole, _retryRateLimitRequestOptions);
                 }
             }
 
-            int groupsCreated = groupAmount; // just for user-feedback
+            /* ---------- handle overflow / distribute leftover users ---------- */
             if (usersToGroup.Count > 0)
             {
                 switch (overflowHandling)
@@ -143,16 +153,21 @@ namespace HomeScoutingBot.Modules
                     case GroupOverflowHandling.Spread:
                         for (int i = 0; i < usersToGroup.Count; i++)
                         {
-                            // Put all users in the group at their position with loop-around - random enough for us
-                            await AddUserToGroup(usersToGroup[i], (i % groupAmount) + 1);
+                            // Put all users in the group at their position with loop-around - random enough for us.
+                            // Since it only puts users in the already existing groups, we can safely pass createIfMissing: false.
+                            // We need the cache here since since Context.Guild.Roles isn't updated fast enough when createMissingGroups=true.
+                            IRole groupRole = await GetGroupRole((i % groupAmount) + 1, createIfMissing: false, groupRolesCache);
+                            await usersToGroup[i].AddRoleAsync(groupRole, _retryRateLimitRequestOptions);
                         }
 
                         break;
                     case GroupOverflowHandling.NewGroup:
-                        groupsCreated++;
+                        groupAmount++;
+                        // This group was 100% not cached so we don't even pass the cache
+                        IRole role = await GetGroupRole(groupAmount, createMissingGroups, roleCache: null);
                         foreach (SocketGuildUser user in usersToGroup)
                         {
-                            await AddUserToGroup(user, groupsCreated);
+                            await user.AddRoleAsync(role, _retryRateLimitRequestOptions);
                         }
 
                         break;
@@ -161,7 +176,7 @@ namespace HomeScoutingBot.Modules
                 }
             }
 
-            await ReplyAsync($"{groupAmount * groupSize + usersToGroup.Count} users were split into {groupsCreated} groups."); // TODO TextOptions
+            await ReplyAsync($"{totalUsersToDistribute} users were split into {groupAmount} groups."); // TODO TextOptions
         }
 
         private static void ExcludeSpecifiedUsers(IEnumerable<string> excludes, List<SocketGuildUser> users)
@@ -175,7 +190,7 @@ namespace HomeScoutingBot.Modules
                 ulong mentionId = ulong.Parse(ignore.Substring(3, ignore.Length - 3 - 1));
                 if (ignore.StartsWith("<@&")) // exclude specific roles
                 {
-                    users.RemoveAll(g => g.Roles.Any(r => r.Id == mentionId));  // id-based Contains
+                    users.RemoveAll(g => g.Roles.Any(r => r.Id == mentionId)); // id-based Contains
                 }
                 else if (ignore.StartsWith("<@!")) // exclude specific users
                 {
@@ -188,15 +203,23 @@ namespace HomeScoutingBot.Modules
             }
         }
 
-        private Task AddUserToGroup(IGuildUser user, int group)
+        private async Task<IRole> GetGroupRole(int groupNumber, bool createIfMissing, IReadOnlyDictionary<int, IRole>? roleCache)
         {
-            string roleName = string.Format(_groupConfig.GroupChannelNameTemplate, group);
-            SocketRole? role = Context.Guild.Roles.FirstOrDefault(r => r.Name.Equals(roleName, StringComparison.OrdinalIgnoreCase));
+            IRole? role;
 
-            if (role is null) // TODO oh boy this is a late fail. Easily recoverable by calling the breakup command but still..
+            if (roleCache is not null && roleCache.TryGetValue(groupNumber, out role))
+                return role;
+
+            string roleName = string.Format(_groupConfig.GroupChannelNameTemplate, groupNumber);
+            role = Context.Guild.Roles.FirstOrDefault(r => r.Name.Equals(roleName, StringComparison.OrdinalIgnoreCase));
+
+            if (role is not null)
+                return role;
+
+            if (!createIfMissing) // this is a late fail. Easily recoverable by calling the breakup command but still not good..
                 throw new InvalidOperationException($"The guild doesn't appear to be setup for {roleName}.");
 
-            return user.AddRoleAsync(role, _retryRateLimitRequestOptions);
+            return (await CreateGroup(groupNumber)).role;
         }
 
         [Command(nameof(BreakUp))]
