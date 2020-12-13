@@ -23,7 +23,6 @@ namespace HomeScoutingBot.Modules
         private readonly ILogger<GroupModule> _logger;
         private readonly Lazy<Predicate<string>> _groupNameMatcher;
         private readonly Lazy<Random> _rng;
-        private readonly RequestOptions _retryRateLimitRequestOptions;
         private readonly IReadOnlyList<Color> _roleColors = new[] // Just some good looking Colors from Chart.js
         {
             new Color(77,  201, 246), new Color(246, 112, 25),  new Color(245, 55,  148), new Color(83,  123, 196), new Color(172, 194, 54),
@@ -41,7 +40,6 @@ namespace HomeScoutingBot.Modules
             _logger = logger;
             _groupNameMatcher = new Lazy<Predicate<string>>(GetGroupNameMatcher);
             _rng = new Lazy<Random>();
-            _retryRateLimitRequestOptions = new RequestOptions { RetryMode = RetryMode.RetryRatelimit }; // Not sure if this is needed
         }
 
         [Command(nameof(Setup))]
@@ -67,24 +65,23 @@ namespace HomeScoutingBot.Modules
                                                                 GuildPermissions.None,
                                                                 _roleColors[(groupNumber-1) % _roleColors.Count], // groupNumber is 1-indexed
                                                                 isMentionable: false,
-                                                                isHoisted: true,
-                                                                options: _retryRateLimitRequestOptions);
+                                                                isHoisted: true);
 
             // Create group-category which only 'role' can see and join
-            RestCategoryChannel category = await Context.Guild.CreateCategoryChannelAsync(name, options: _retryRateLimitRequestOptions);
+            RestCategoryChannel category = await Context.Guild.CreateCategoryChannelAsync(name);
 
             OverwritePermissions groupPermission = new OverwritePermissions(viewChannel: PermValue.Allow, connect: PermValue.Allow);
-            await category.AddPermissionOverwriteAsync(role, groupPermission, _retryRateLimitRequestOptions);
+            await category.AddPermissionOverwriteAsync(role, groupPermission);
             // The bot needs those permissions as well otherwise it can't delete the channel later on. Alternatively you could add 'role' to the bot.
-            await category.AddPermissionOverwriteAsync(Context.Client.CurrentUser, groupPermission, _retryRateLimitRequestOptions);
+            await category.AddPermissionOverwriteAsync(Context.Client.CurrentUser, groupPermission);
 
             OverwritePermissions everyonePermission = new OverwritePermissions(viewChannel: PermValue.Deny, connect: PermValue.Deny);
-            await category.AddPermissionOverwriteAsync(Context.Guild.EveryoneRole, everyonePermission, _retryRateLimitRequestOptions);
+            await category.AddPermissionOverwriteAsync(Context.Guild.EveryoneRole, everyonePermission);
 
             // Add one text and one voice channel
             Action<GuildChannelProperties> assignCategoryId = c => c.CategoryId = category.Id;
-            RestTextChannel text = await Context.Guild.CreateTextChannelAsync(name, assignCategoryId, _retryRateLimitRequestOptions);
-            RestVoiceChannel voice = await Context.Guild.CreateVoiceChannelAsync(name, assignCategoryId, _retryRateLimitRequestOptions);
+            RestTextChannel text = await Context.Guild.CreateTextChannelAsync(name, assignCategoryId);
+            RestVoiceChannel voice = await Context.Guild.CreateVoiceChannelAsync(name, assignCategoryId);
 
             return (role, category, text, voice);
         }
@@ -142,7 +139,7 @@ namespace HomeScoutingBot.Modules
                     SocketGuildUser user = usersToGroup[randomIndex];
                     usersToGroup.RemoveAt(randomIndex);
 
-                    await user.AddRoleAsync(groupRole, _retryRateLimitRequestOptions);
+                    await user.AddRoleAsync(groupRole);
                 }
             }
 
@@ -158,7 +155,7 @@ namespace HomeScoutingBot.Modules
                             // Since it only puts users in the already existing groups, we can safely pass createIfMissing: false.
                             // We need the cache here since since Context.Guild.Roles isn't updated fast enough when createMissingGroups=true.
                             IRole groupRole = await GetGroupRole((i % groupAmount) + 1, createIfMissing: false, groupRolesCache);
-                            await usersToGroup[i].AddRoleAsync(groupRole, _retryRateLimitRequestOptions);
+                            await usersToGroup[i].AddRoleAsync(groupRole);
                         }
 
                         break;
@@ -168,7 +165,7 @@ namespace HomeScoutingBot.Modules
                         IRole role = await GetGroupRole(groupAmount, createMissingGroups, roleCache: null);
                         foreach (SocketGuildUser user in usersToGroup)
                         {
-                            await user.AddRoleAsync(role, _retryRateLimitRequestOptions);
+                            await user.AddRoleAsync(role);
                         }
 
                         break;
@@ -236,7 +233,7 @@ namespace HomeScoutingBot.Modules
                 {
                     if (roles.Any(r => role.Id == r.Id)) // id-based Contains
                     {
-                        await user.RemoveRoleAsync(role, _retryRateLimitRequestOptions);
+                        await user.RemoveRoleAsync(role);
                     }
                 }
             }
@@ -255,22 +252,20 @@ namespace HomeScoutingBot.Modules
             {
                 foreach (SocketGuildChannel innerChannel in category.Channels)
                 {
-                    await Delete(innerChannel);
+                    await innerChannel.DeleteAsync();
                 }
 
-                await Delete(category);
+                await category.DeleteAsync();
             }
 
             int deletedRolesCount = 0; // this isn't always reliable but provides some user feedback
             foreach (SocketRole role in GetGroupRoles())
             {
-                await Delete(role);
+                await role.DeleteAsync();
                 deletedRolesCount++;
             }
 
             await ReplyAsync(string.Format(_textConfig.GroupsDeleted, deletedRolesCount));
-
-            Task Delete(IDeletable deletable) => deletable.DeleteAsync(_retryRateLimitRequestOptions);
         }
 
         private IEnumerable<SocketCategoryChannel> GetGroupCategories() => Context.Guild.CategoryChannels.Where(c => GroupNameMatcher(c.Name));

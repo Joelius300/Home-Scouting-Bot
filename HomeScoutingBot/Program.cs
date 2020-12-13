@@ -31,7 +31,8 @@ namespace HomeScoutingBot
                     GatewayIntents.Guilds |
                     GatewayIntents.GuildMembers |
                     GatewayIntents.GuildMessages |
-                    GatewayIntents.GuildVoiceStates
+                    GatewayIntents.GuildVoiceStates,
+                DefaultRetryMode = RetryMode.RetryRatelimit
             });
 
             services.AddSingleton(new CommandServiceConfig
