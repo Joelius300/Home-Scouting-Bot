@@ -25,5 +25,15 @@ namespace HomeScoutingBot.Options
         /// A format string which takes the number of groups created.
         /// </summary>
         public string GroupsCreated { get; set; } = "{0} groups added.";
+
+        /// <summary>
+        /// A format string which takes the number of distributed users and the number of groups the users were distributed to.
+        /// </summary>
+        public string UsersDistributed { get; set; } = "{0} users were split into {1} groups.";
+
+        /// <summary>
+        /// A string which says that all groups were broken up.
+        /// </summary>
+        public string GroupsBrokenUp { get; set; } = "All groups were broken up.";
     }
 }

@@ -124,7 +124,7 @@ namespace HomeScoutingBot.Modules
                 usersToGroup.Count % groupSize > 0)
             {
                 // In case of disallowed overflow, throw the exception before distributing any roles (fast fail)
-                throw new InvalidOperationException($"{usersToGroup.Count} users can't be split evenly into {groupAmount} groups.");
+                throw new InvalidOperationException($"{usersToGroup.Count} users can't be split evenly into {groupAmount} groups of {groupSize}.");
             }
 
             /* ---------- distribute evenly without taking overflow into account ---------- */
@@ -174,7 +174,7 @@ namespace HomeScoutingBot.Modules
                 }
             }
 
-            await ReplyAsync($"{totalUsersToDistribute} users were split into {groupAmount} groups."); // TODO TextOptions
+            await ReplyAsync(string.Format(_textConfig.UsersDistributed, totalUsersToDistribute, groupAmount));
         }
 
         private static void ExcludeSpecifiedUsers(IEnumerable<string> excludes, List<SocketGuildUser> users)
@@ -238,7 +238,7 @@ namespace HomeScoutingBot.Modules
                 }
             }
 
-            await ReplyAsync("All groups were broken up."); // TODO TextOptions
+            await ReplyAsync(_textConfig.GroupsBrokenUp);
         }
 
         [Command(nameof(Teardown))]
